@@ -92,24 +92,68 @@ async def say(interaction: discord.Interaction, message: str):
     await interaction.response.send_message("✅ Message sent!", ephemeral=True)
     await interaction.channel.send(message)
 
-@bot.tree.command(name="embed", description="Send a custom embed message")
+class EmbedModal(discord.ui.Modal, title="Create Embed"):
+    embed_title = discord.ui.TextInput(
+        label="Title",
+        placeholder="Enter the embed title...",
+        max_length=256
+    )
+    description = discord.ui.TextInput(
+        label="Description",
+        placeholder="Enter the embed body text...",
+        style=discord.TextStyle.paragraph,
+        max_length=4000
+    )
+    color = discord.ui.TextInput(
+        label="Color (hex code)",
+        placeholder="e.g. FF5733  —  leave blank for default blue",
+        required=False,
+        max_length=7
+    )
+    footer = discord.ui.TextInput(
+        label="Footer Text (optional)",
+        placeholder="e.g. Posted by Admins",
+        required=False,
+        max_length=2048
+    )
+    image_url = discord.ui.TextInput(
+        label="Image URL (optional)",
+        placeholder="https://example.com/image.png",
+        required=False,
+        max_length=500
+    )
+
+    def __init__(self, channel):
+        super().__init__()
+        self.channel = channel
+
+    async def on_submit(self, interaction: discord.Interaction):
+        hex_str = self.color.value.strip().lstrip("#") if self.color.value.strip() else "5865F2"
+        try:
+            embed_color = discord.Color(int(hex_str, 16))
+        except ValueError:
+            await interaction.response.send_message("❌ Invalid color. Use a hex code like `FF5733`.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=self.embed_title.value,
+            description=self.description.value,
+            color=embed_color
+        )
+        if self.footer.value.strip():
+            embed.set_footer(text=self.footer.value.strip())
+        else:
+            embed.set_footer(text=f"Posted by {interaction.user.display_name}")
+        if self.image_url.value.strip():
+            embed.set_image(url=self.image_url.value.strip())
+
+        await interaction.response.send_message("✅ Embed sent!", ephemeral=True)
+        await self.channel.send(embed=embed)
+
+@bot.tree.command(name="createembed", description="Open a form to create and send a custom embed")
 @app_commands.checks.has_permissions(manage_messages=True)
-@app_commands.describe(
-    title="The title of the embed",
-    description="The body text of the embed",
-    color="Hex color code, e.g. FF5733 (optional)"
-)
-async def send_embed(interaction: discord.Interaction, title: str, description: str, color: str = "5865F2"):
-    hex_str = color.lstrip("#")
-    try:
-        embed_color = discord.Color(int(hex_str, 16))
-    except ValueError:
-        await interaction.response.send_message("❌ Invalid color. Use a hex code like `FF5733`.", ephemeral=True)
-        return
-    embed = discord.Embed(title=title, description=description, color=embed_color)
-    embed.set_footer(text=f"Posted by {interaction.user.display_name}")
-    await interaction.response.send_message("✅ Embed sent!", ephemeral=True)
-    await interaction.channel.send(embed=embed)
+async def createembed(interaction: discord.Interaction):
+    await interaction.response.send_modal(EmbedModal(channel=interaction.channel))
 
 @bot.tree.command(name="kick", description="Kick a member from the server")
 @app_commands.checks.has_permissions(kick_members=True)
