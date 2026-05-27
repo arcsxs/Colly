@@ -92,68 +92,159 @@ async def say(interaction: discord.Interaction, message: str):
     await interaction.response.send_message("✅ Message sent!", ephemeral=True)
     await interaction.channel.send(message)
 
-class EmbedModal(discord.ui.Modal, title="Create Embed"):
-    embed_title = discord.ui.TextInput(
-        label="Title",
-        placeholder="Enter the embed title...",
-        max_length=256
-    )
-    description = discord.ui.TextInput(
-        label="Description",
-        placeholder="Enter the embed body text...",
-        style=discord.TextStyle.paragraph,
-        max_length=4000
-    )
-    color = discord.ui.TextInput(
-        label="Color (hex code)",
-        placeholder="e.g. FF5733  —  leave blank for default blue",
-        required=False,
-        max_length=7
-    )
-    footer = discord.ui.TextInput(
-        label="Footer Text (optional)",
-        placeholder="e.g. Posted by Admins",
-        required=False,
-        max_length=2048
-    )
-    image_url = discord.ui.TextInput(
-        label="Image URL (optional)",
-        placeholder="https://example.com/image.png",
-        required=False,
-        max_length=500
-    )
-
-    def __init__(self, channel):
-        super().__init__()
+class EmbedBuilderView(discord.ui.View):
+    def __init__(self, author_id, channel, preview_message=None):
+        super().__init__(timeout=300)
+        self.author_id = author_id
         self.channel = channel
+        self.preview_message = preview_message
+        self.data = {
+            "title": None,
+            "description": None,
+            "color": 0x5865F2,
+            "footer": None,
+            "image": None,
+            "thumbnail": None,
+            "fields": []
+        }
 
-    async def on_submit(self, interaction: discord.Interaction):
-        hex_str = self.color.value.strip().lstrip("#") if self.color.value.strip() else "5865F2"
-        try:
-            embed_color = discord.Color(int(hex_str, 16))
-        except ValueError:
-            await interaction.response.send_message("❌ Invalid color. Use a hex code like `FF5733`.", ephemeral=True)
+    def build_embed(self, preview=False):
+        embed = discord.Embed(color=self.data["color"])
+        embed.title = self.data["title"] or ("📋 Embed Preview" if preview else None)
+        embed.description = self.data["description"] or ("*No description set yet.*" if preview else None)
+        if self.data["footer"]:
+            embed.set_footer(text=self.data["footer"])
+        if self.data["image"]:
+            embed.set_image(url=self.data["image"])
+        if self.data["thumbnail"]:
+            embed.set_thumbnail(url=self.data["thumbnail"])
+        for f in self.data["fields"]:
+            embed.add_field(name=f["name"], value=f["value"], inline=f["inline"])
+        return embed
+
+    async def update_preview(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(embed=self.build_embed(preview=True), view=self)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("❌ Only the person who ran this command can use these buttons.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Title & Description", emoji="📝", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_title_desc(self, interaction: discord.Interaction, button: discord.ui.Button):
+        class TitleDescModal(discord.ui.Modal, title="Edit Title & Description"):
+            t = discord.ui.TextInput(label="Title", placeholder="Embed title...", required=False, max_length=256,
+                                     default=self.data.get("title") or "")
+            d = discord.ui.TextInput(label="Description", placeholder="Embed body text...", required=False,
+                                     style=discord.TextStyle.paragraph, max_length=4000,
+                                     default=self.data.get("description") or "")
+            async def on_submit(modal_self, inter):
+                self.data["title"] = modal_self.t.value.strip() or None
+                self.data["description"] = modal_self.d.value.strip() or None
+                await self.update_preview(inter)
+        await interaction.response.send_modal(TitleDescModal())
+
+    @discord.ui.button(label="Color", emoji="🎨", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_color(self, interaction: discord.Interaction, button: discord.ui.Button):
+        class ColorModal(discord.ui.Modal, title="Set Color"):
+            c = discord.ui.TextInput(label="Hex Color", placeholder="e.g. FF5733 or #FF5733", max_length=7)
+            async def on_submit(modal_self, inter):
+                hex_str = modal_self.c.value.strip().lstrip("#")
+                try:
+                    self.data["color"] = int(hex_str, 16)
+                    await self.update_preview(inter)
+                except ValueError:
+                    await inter.response.send_message("❌ Invalid color. Use a hex code like `FF5733`.", ephemeral=True)
+        await interaction.response.send_modal(ColorModal())
+
+    @discord.ui.button(label="Footer", emoji="📄", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_footer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        class FooterModal(discord.ui.Modal, title="Set Footer"):
+            f = discord.ui.TextInput(label="Footer Text", placeholder="e.g. Posted by Admins", required=False,
+                                     max_length=2048, default=self.data.get("footer") or "")
+            async def on_submit(modal_self, inter):
+                self.data["footer"] = modal_self.f.value.strip() or None
+                await self.update_preview(inter)
+        await interaction.response.send_modal(FooterModal())
+
+    @discord.ui.button(label="Images", emoji="🖼️", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_images(self, interaction: discord.Interaction, button: discord.ui.Button):
+        class ImagesModal(discord.ui.Modal, title="Set Images"):
+            img = discord.ui.TextInput(label="Large Image URL", placeholder="https://example.com/image.png",
+                                       required=False, max_length=500, default=self.data.get("image") or "")
+            thumb = discord.ui.TextInput(label="Thumbnail URL (top-right corner)", placeholder="https://example.com/thumb.png",
+                                         required=False, max_length=500, default=self.data.get("thumbnail") or "")
+            async def on_submit(modal_self, inter):
+                self.data["image"] = modal_self.img.value.strip() or None
+                self.data["thumbnail"] = modal_self.thumb.value.strip() or None
+                await self.update_preview(inter)
+        await interaction.response.send_modal(ImagesModal())
+
+    @discord.ui.button(label="Add Field", emoji="➕", style=discord.ButtonStyle.secondary, row=1)
+    async def add_field(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if len(self.data["fields"]) >= 25:
+            await interaction.response.send_message("❌ Maximum of 25 fields reached.", ephemeral=True)
             return
+        class FieldModal(discord.ui.Modal, title="Add Field"):
+            name = discord.ui.TextInput(label="Field Name", placeholder="e.g. Rules", max_length=256)
+            value = discord.ui.TextInput(label="Field Value", placeholder="e.g. Be respectful!",
+                                         style=discord.TextStyle.paragraph, max_length=1024)
+            inline = discord.ui.TextInput(label="Inline? (yes/no)", placeholder="yes", max_length=3, default="no")
+            async def on_submit(modal_self, inter):
+                self.data["fields"].append({
+                    "name": modal_self.name.value,
+                    "value": modal_self.value.value,
+                    "inline": modal_self.inline.value.strip().lower() == "yes"
+                })
+                await self.update_preview(inter)
+        await interaction.response.send_modal(FieldModal())
 
-        embed = discord.Embed(
-            title=self.embed_title.value,
-            description=self.description.value,
-            color=embed_color
-        )
-        if self.footer.value.strip():
-            embed.set_footer(text=self.footer.value.strip())
-        else:
-            embed.set_footer(text=f"Posted by {interaction.user.display_name}")
-        if self.image_url.value.strip():
-            embed.set_image(url=self.image_url.value.strip())
+    @discord.ui.button(label="Clear Fields", emoji="🗑️", style=discord.ButtonStyle.danger, row=1)
+    async def clear_fields(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.data["fields"] = []
+        await self.update_preview(interaction)
 
-        await interaction.response.send_message("✅ Embed sent!", ephemeral=True)
-        await self.channel.send(embed=embed)
+    @discord.ui.button(label="Send Embed", emoji="✅", style=discord.ButtonStyle.success, row=1)
+    async def send_embed_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.data["title"] and not self.data["description"] and not self.data["fields"]:
+            await interaction.response.send_message("❌ Add at least a title or description before sending.", ephemeral=True)
+            return
+        final_embed = self.build_embed(preview=False)
+        await self.channel.send(embed=final_embed)
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="✅ **Embed sent!**", embed=None, view=self)
+        self.stop()
 
-@bot.tree.command(name="createembed", description="Open a form to create and send a custom embed")
+    @discord.ui.button(label="Cancel", emoji="❌", style=discord.ButtonStyle.danger, row=1)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="❌ **Embed builder cancelled.**", embed=None, view=self)
+        self.stop()
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.preview_message:
+            try:
+                await self.preview_message.edit(content="⏰ Embed builder timed out.", embed=None, view=self)
+            except Exception:
+                pass
+
+@bot.tree.command(name="createembed", description="Open the interactive embed builder")
 @app_commands.checks.has_permissions(manage_messages=True)
 async def createembed(interaction: discord.Interaction):
-    await interaction.response.send_modal(EmbedModal(channel=interaction.channel))
+    view = EmbedBuilderView(author_id=interaction.user.id, channel=interaction.channel)
+    preview = view.build_embed(preview=True)
+    await interaction.response.send_message(
+        content="### 🛠️ Embed Builder\nUse the buttons below to build your embed. Click **Send Embed** when done.",
+        embed=preview,
+        view=view,
+        ephemeral=True
+    )
+    view.preview_message = await interaction.original_response()
 
 @bot.tree.command(name="kick", description="Kick a member from the server")
 @app_commands.checks.has_permissions(kick_members=True)
